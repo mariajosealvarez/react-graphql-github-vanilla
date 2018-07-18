@@ -12,30 +12,20 @@ const axiosGitHubGraphQL = axios.create({
   },
 });
 
-/*
-const GET_REPOSITORY_OF_ORGANIZATION = `
-  {
-    organization(login: "the-road-to-learn-react") {
-      name
-      url
-      repository(name: "the-road-to-learn-react") {
-        name
-        url
-      }
-    }
-  }
-`;
-*/
-
 const GET_ISSUES_OF_REPOSITORY = `
   query ($organization: String!, $repository: String!, $cursor: String) {
     organization(login: $organization) {
       name
       url
       repository(name: $repository) {
+        id
         name
         url
-        issues(last: 5, after: $cursor, states: [OPEN]) {
+        stargazers {
+          totalCount
+        }
+        viewerHasStarred
+        issues(first: 5, after: $cursor, states: [OPEN]) {
           edges {
             node {
               id
@@ -62,28 +52,44 @@ const GET_ISSUES_OF_REPOSITORY = `
   }
 `;
 
-/*
-const getIssuesOfRepositoryQuery = (organization, repository) => `
-  {
-    organization(login: "${organization}") {
-      name
-      url
-      repository(name: "${repository}") {
-        name
-        url
-        issues(last: 5) {
-          edges {
-            node {
-              id
-              title
-              url
-            }
-          }
-        }
+const ADD_STAR = `
+  mutation ($repositoryId: ID!) {
+    addStar(input:{starrableId:$repositoryId}) {
+      starrable {
+        viewerHasStarred
       }
     }
   }
-`; */
+`;
+
+const addStarToRepository = repositoryId => {
+  return axiosGitHubGraphQL.post('', {
+    query: ADD_STAR,
+    variables: { repositoryId },
+  });
+};
+
+const resolveAddStarMutation = mutationResult => state => {
+  const {
+    viewerHasStarred,
+  } = mutationResult.data.data.addStar.starrable;
+
+  const { totalCount } = state.organization.repository.stargazers;
+
+  return {
+    ...state,
+    organization: {
+      ...state.organization,
+      repository: {
+        ...state.organization.repository,
+        viewerHasStarred,
+        stargazers: {
+          totalCount: totalCount + 1,
+        },
+      },
+    },
+  };
+};
 
 const getIssuesOfRepository = (path, cursor) => {
   const [organization, repository] = path.split('/');
@@ -122,7 +128,12 @@ const resolveIssuesQuery = (queryResult, cursor) => state => {
     errors,
   };
 }
-const Organization = ({ organization, errors, onFetchMoreIssues }) => {
+const Organization = ({
+  organization,
+  errors,
+  onFetchMoreIssues,
+  onStarRepository
+}) => {
   if (errors) {
     return (
       <p>
@@ -141,17 +152,30 @@ const Organization = ({ organization, errors, onFetchMoreIssues }) => {
       <Repository
         repository={organization.repository}
         onFetchMoreIssues={onFetchMoreIssues}
+        onStarRepository={onStarRepository}
       />
     </div>
   );
 };
 
-const Repository = ({ repository, onFetchMoreIssues }) => (
+const Repository = ({
+  repository,
+  onFetchMoreIssues,
+  onStarRepository
+}) => (
   <div>
     <p>
       <strong>In Repository:</strong>
       <a href={repository.url}>{repository.name}</a>
     </p>
+
+    <button
+      type="button"
+      onClick={() => onStarRepository(repository.id, repository.viewerHasStarred)}
+    >
+      {repository.stargazers.totalCount}
+      {repository.viewerHasStarred ? 'Unstar' : 'Star'}
+    </button>
 
     <ul>
       {repository.issues.edges.map(issue => (
@@ -182,6 +206,12 @@ class App extends Component {
     path: 'the-road-to-learn-react/the-road-to-learn-react',
     organization: null,
     errors: null,
+  };
+
+  onStarRepository = (repositoryId, viewerHasStarred) => {
+    addStarToRepository(repositoryId).then(mutationResult =>
+      this.setState(resolveAddStarMutation(mutationResult)),
+    );
   };
 
   componentDidMount() {
@@ -238,6 +268,7 @@ class App extends Component {
             organization={organization}
             errors={errors}
             onFetchMoreIssues={this.onFetchMoreIssues}
+            onStarRepository={this.onStarRepository}
           />
         ) : (
           <p>No information yet ...</p>
